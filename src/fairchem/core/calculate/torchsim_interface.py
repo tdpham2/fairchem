@@ -232,10 +232,12 @@ class FairChemModel(_TSModelInterface):
             task_name = UMATask(task_name)
 
         # Use the efficient predictor API for optimal performance
-        self._device = device or torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-        device_str: Literal["cuda", "cpu"] = (
+        if device is None:
+            from fairchem.core.common.distutils import get_available_device
+
+            device = torch.device(get_available_device())
+        self._device = device
+        device_str: Literal["cuda", "cpu", "xpu"] = (
             self._device.type
         )  # ty:ignore[invalid-assignment]
         self.task_name = task_name
