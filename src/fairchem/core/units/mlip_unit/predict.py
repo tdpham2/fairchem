@@ -220,7 +220,10 @@ class MLIPPredictUnit(PredictUnit[AtomicData], MLIPPredictUnitProtocol):
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.manual_seed_all(seed)
 
     def _setup_refs(self, atom_refs: dict | None, form_elem_refs: dict | None) -> None:
         """
@@ -245,8 +248,14 @@ class MLIPPredictUnit(PredictUnit[AtomicData], MLIPPredictUnitProtocol):
         """
         Setup inference device.
         """
-        assert device in ["cpu", "cuda"], "device must be either 'cpu' or 'cuda'"
-        self.device = get_device_for_local_rank() if device == "cuda" else "cpu"
+        assert device in (
+            "cpu",
+            "cuda",
+            "xpu",
+        ), f"device must be 'cpu', 'cuda', or 'xpu', got '{device}'"
+        self.device = (
+            get_device_for_local_rank() if device in ("cuda", "xpu") else "cpu"
+        )
 
     def _build_overrides_from_settings(
         self,
@@ -565,8 +574,13 @@ class MLIPWorkerLocal:
         setup_env_local_multi_gpu(self.worker_id, self.master_port, self.master_address)
 
         device = self.predictor_config.get("device", "cpu")
-        assign_device_for_local_rank(device == "cpu", 0)
-        backend = "gloo" if device == "cpu" else "nccl"
+        assign_device_for_local_rank(device, 0)
+        if device == "cpu":
+            backend = "gloo"
+        elif device == "xpu":
+            backend = "ccl"
+        else:
+            backend = "nccl"
         dist.init_process_group(
             backend=backend,
             rank=self.worker_id,

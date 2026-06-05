@@ -132,7 +132,10 @@ class BatchPredictServerMixin:
                     "Caught out of memory error. Splitting batch and retrying."
                 )
                 oom = True
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif hasattr(torch, "xpu") and torch.xpu.is_available():
+                    torch.xpu.empty_cache()
 
             if oom:
                 mid = len(data_list) // 2
@@ -362,7 +365,10 @@ class MultiplexedBatchPredictServer(BatchPredictServerMixin):
                         "Caught out of memory error. Splitting batch and retrying."
                     )
                     oom = True
-                    torch.cuda.empty_cache()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    elif hasattr(torch, "xpu") and torch.xpu.is_available():
+                        torch.xpu.empty_cache()
 
                 if oom:
                     mid = len(current) // 2
@@ -398,7 +404,9 @@ class MultiplexedBatchPredictServer(BatchPredictServerMixin):
         checkpoint = parts[0]
         settings_name = parts[1] if len(parts) > 1 and parts[1] else "default"
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        from fairchem.core.common.distutils import get_available_device
+
+        device = get_available_device()
 
         if os.path.isfile(checkpoint):
             from fairchem.core.units.mlip_unit import load_predict_unit
@@ -568,7 +576,9 @@ def setup_batch_predict_server(
     if ray_actor_options is None:
         ray_actor_options = {}
 
-    if "cuda" in predict_unit.device and "num_gpus" not in ray_actor_options:
+    if (
+        "cuda" in predict_unit.device or "xpu" in predict_unit.device
+    ) and "num_gpus" not in ray_actor_options:
         ray_actor_options["num_gpus"] = 1
 
     _init_ray_and_serve(ray_actor_options, num_replicas)
@@ -625,7 +635,10 @@ def setup_multiplexed_batch_predict_server(
     if ray_actor_options is None:
         ray_actor_options = {}
 
-    if torch.cuda.is_available() and "num_gpus" not in ray_actor_options:
+    has_accelerator = torch.cuda.is_available() or (
+        hasattr(torch, "xpu") and torch.xpu.is_available()
+    )
+    if has_accelerator and "num_gpus" not in ray_actor_options:
         ray_actor_options["num_gpus"] = 1
 
     _init_ray_and_serve(ray_actor_options, num_replicas)
