@@ -61,15 +61,21 @@ def _get_slurm_env() -> SlurmEnv:
     return slurm_env
 
 
+def _distributed_backend_for_device(device_type: DeviceType) -> str:
+    if device_type == DeviceType.CPU:
+        return "gloo"
+    if device_type == DeviceType.XPU:
+        return "ccl"
+    return "nccl"
+
+
 def map_job_config_to_dist_config(job_cfg: JobConfig) -> dict:
     scheduler_config = job_cfg.scheduler
     return {
         "world_size": scheduler_config.num_nodes * scheduler_config.ranks_per_node,
-        "distributed_backend": (
-            "gloo" if job_cfg.device_type == DeviceType.CPU else "nccl"
-        ),
+        "distributed_backend": _distributed_backend_for_device(job_cfg.device_type),
         "submit": scheduler_config.mode == SchedulerType.SLURM,
-        "cpu": job_cfg.device_type == DeviceType.CPU,
+        "device_type": job_cfg.device_type.value,
         "init_method": scheduler_config.distributed_init_method,
         # for distributed shared file initialization
         "shared_file_dir": os.path.join(job_cfg.run_dir, job_cfg.timestamp_id),
@@ -99,15 +105,18 @@ def _set_seeds(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        torch.xpu.manual_seed_all(seed)
 
 
 def _set_deterministic_mode() -> None:
-    # this is required for full cuda deterministic mode
     logging.info("Setting deterministic mode!")
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    if torch.cuda.is_available():
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)
 
 
